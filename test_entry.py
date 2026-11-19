@@ -1,9 +1,9 @@
-"""End-to-end test for the news-image-20261119 entry.
+"""End-to-end check for the news-image-20261119 entry.
 
-Runs main.py twice to two different output folders and checks:
-- both runs exit 0,
-- both outputs are byte-identical to each other and to entry.png,
-- the output is a JPEG, 1024x1024, under the 1 MiB cap.
+Runs main.py twice into separate temporary output folders and verifies
+that both runs succeed, both outputs match the source image byte for
+byte, and the image is a JPEG of 1024 by 1024 pixels under the 1 MiB
+cap.
 
 Run: python3 test_entry.py
 """
@@ -16,54 +16,69 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-MAX_BYTES = 1_048_576
+IMAGE_FILE = "entry.png"
+SIZE_LIMIT = 1_048_576
 
 
-def sha256(path: Path) -> str:
+def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def main() -> int:
-    source = HERE / "entry.png"
-    if not source.exists():
-        print("error: entry.png missing", file=sys.stderr)
+def run_once(out_dir):
+    env = dict(os.environ, MAKEFUN_OUTPUT_DIR=str(out_dir))
+    return subprocess.run(
+        [sys.executable, str(HERE / "main.py")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def main():
+    source = HERE / IMAGE_FILE
+    if not source.is_file():
+        print(f"error: {source} is missing", file=sys.stderr)
         return 1
+
+    source_digest = digest(source)
+    source_size = source.stat().st_size
+    print(f"source: {source_digest} ({source_size} bytes)")
 
     digests = []
     with tempfile.TemporaryDirectory() as tmp:
-        for i in (1, 2):
-            out_dir = Path(tmp) / f"out{i}"
-            env = dict(os.environ, MAKEFUN_OUTPUT_DIR=str(out_dir))
-            result = subprocess.run(
-                [sys.executable, str(HERE / "main.py")],
-                env=env, capture_output=True, text=True, check=False,
-            )
-            print(f"run {i}: exit={result.returncode} {result.stdout.strip()}")
+        for run in (1, 2):
+            out_dir = Path(tmp) / f"run{run}"
+            result = run_once(out_dir)
+            print(f"run {run}: exit {result.returncode}: {result.stdout.strip()}")
             if result.returncode != 0:
                 print(result.stderr, file=sys.stderr)
                 return 1
-            target = out_dir / "entry.png"
-            if not target.exists():
-                print(f"error: run {i} wrote no entry.png", file=sys.stderr)
+            written = out_dir / IMAGE_FILE
+            if not written.is_file():
+                print(f"error: run {run} wrote no {IMAGE_FILE}", file=sys.stderr)
                 return 1
-            digests.append(sha256(target))
+            digests.append(digest(written))
 
-    source_digest = sha256(source)
-    print(f"source sha256: {source_digest}")
-    print(f"run 1 sha256:  {digests[0]}")
-    print(f"run 2 sha256:  {digests[1]}")
-    assert digests[0] == digests[1] == source_digest, "outputs differ"
-    print("byte-identical across runs: yes")
+    if digests[0] != digests[1] or digests[0] != source_digest:
+        print("error: outputs are not byte-identical to the source", file=sys.stderr)
+        return 1
+    print("byte-identical across both runs and the source: yes")
 
     from PIL import Image
 
-    with Image.open(source) as im:
-        print(f"format: {im.format}, dimensions: {im.size}, mode: {im.mode}")
-        assert im.format == "JPEG", "not a JPEG"
-        assert im.size == (1024, 1024), "not 1024x1024"
-    size = source.stat().st_size
-    print(f"size: {size} bytes (cap {MAX_BYTES})")
-    assert size <= MAX_BYTES, "over the 1 MiB cap"
+    with Image.open(source) as image:
+        print(f"format: {image.format}, size: {image.size}, mode: {image.mode}")
+        if image.format != "JPEG":
+            print("error: not a JPEG", file=sys.stderr)
+            return 1
+        if image.size != (1024, 1024):
+            print("error: not 1024 by 1024", file=sys.stderr)
+            return 1
+
+    if source_size > SIZE_LIMIT:
+        print(f"error: {source_size} bytes is over the 1 MiB cap", file=sys.stderr)
+        return 1
+    print(f"size {source_size} bytes is under the 1 MiB cap")
     print("all checks passed")
     return 0
 

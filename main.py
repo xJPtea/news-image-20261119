@@ -1,51 +1,64 @@
-"""news-image-20261119 entry (Python 3.13, standard library only).
+"""Entry for make.fun competition news-image-20261119.
 
-The entry image is the file ``entry.png`` beside this program: a newspaper
-front page summing up the world news of Thursday 19 November 2026
-(masthead "THE WORLD TODAY", lead story the Trump-Xi-Putin meeting in
-Shenzhen, plus six more stories of the day). The program copies that file
-byte for byte to the output directory, so both grader runs write
-identical bytes — the competition runs the program twice and requires
-both runs to produce the same file. No network, no randomness, no
-dependencies.
+The repository holds a single front-page image next to this program.
+Running the program copies that image, unchanged, into the output
+directory, so the grader's two runs produce identical bytes. The
+program uses only the Python standard library, reaches no network,
+and makes no random choices.
 
-Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+Local run:
     mkdir -p out && MAKEFUN_OUTPUT_DIR=out python3 main.py
 """
 
+import hashlib
 import os
-import shutil
 import sys
 from pathlib import Path
 
-SOURCE_NAME = "entry.png"
-JPEG_MAGIC = b"\xff\xd8\xff"
-MAX_BYTES = 1_048_576  # competition cap: image at most 1 MiB
+IMAGE_FILE = "entry.png"
+JPEG_PREFIX = b"\xff\xd8\xff"
+JPEG_SUFFIX = b"\xff\xd9"
+SIZE_LIMIT = 1_048_576
 
 
-def main() -> int:
-    source = Path(__file__).resolve().parent / SOURCE_NAME
-    out_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
-    target = out_dir / SOURCE_NAME
+def fail(message):
+    print(f"error: {message}", file=sys.stderr)
+    return 1
 
-    data = source.read_bytes()
-    if not data.startswith(JPEG_MAGIC):
-        print(f"error: {source} is not a JPEG image", file=sys.stderr)
-        return 1
-    if len(data) > MAX_BYTES:
-        print(f"error: {source} is {len(data)} bytes, over the 1 MiB cap",
-              file=sys.stderr)
-        return 1
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, target)
+def main():
+    here = Path(__file__).resolve().parent
+    source = here / IMAGE_FILE
+    output_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
+    destination = output_dir / IMAGE_FILE
 
-    written = target.read_bytes()
-    if written != data:
-        print("error: output bytes differ from source", file=sys.stderr)
-        return 1
+    try:
+        image_bytes = source.read_bytes()
+    except OSError as exc:
+        return fail(f"cannot read {source}: {exc}")
 
-    print(f"wrote {target} ({len(written)} bytes)")
+    if not image_bytes.startswith(JPEG_PREFIX):
+        return fail(f"{source} does not start with the JPEG magic bytes")
+
+    if not image_bytes.endswith(JPEG_SUFFIX):
+        return fail(f"{source} lacks the JPEG end marker, so it is truncated")
+
+    if len(image_bytes) > SIZE_LIMIT:
+        return fail(
+            f"{source} is {len(image_bytes)} bytes, over the 1 MiB limit"
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        destination.write_bytes(image_bytes)
+    except OSError as exc:
+        return fail(f"cannot write {destination}: {exc}")
+
+    if destination.read_bytes() != image_bytes:
+        return fail(f"{destination} differs from {source} after writing")
+
+    digest = hashlib.sha256(image_bytes).hexdigest()
+    print(f"wrote {destination} ({len(image_bytes)} bytes, sha256 {digest})")
     return 0
 
 
